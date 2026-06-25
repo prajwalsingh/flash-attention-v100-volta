@@ -18,7 +18,7 @@
 // SWIZZLE:  S read via ld_float4/ld_float(addr, row). P stored via st_half2/st_half(addr, row).
 //           O rescaled via ld_float4/st_float4(addr, row) when BLOCK_ID > 0.
 // ======================================================================================
-template <typename Config, int BLOCK_M, int BLOCK_N, int SCORE_STRIDE, int HEAD_STRIDE, bool IS_DROPOUT, bool TAIL = false>
+template <typename Config, int BLOCK_M, int BLOCK_N, int SCORE_STRIDE, int HEAD_STRIDE, bool IS_DROPOUT>
 __device__ __forceinline__ void WMMA_GEMM_SOFTMAX(
     float*   __restrict__ SMEM_S,
     __half*  __restrict__ SMEM_P,
@@ -42,10 +42,11 @@ __device__ __forceinline__ void WMMA_GEMM_SOFTMAX(
     constexpr int THREADS_PER_ROW = Config::DO::THREADS_PER_ROW;
     constexpr int BUFFER = (BLOCK_N / 4 + THREADS_PER_ROW - 1) / THREADS_PER_ROW;
 
-    const int row    = THREAD_ID / THREADS_PER_ROW;
-    const int thread = THREAD_ID % THREADS_PER_ROW;
-    const int cols   = VALID_KV >> 2;
-    const int tail   = (VALID_KV >> 2) << 2;
+    const int  row     = THREAD_ID / THREADS_PER_ROW;
+    const int  thread  = THREAD_ID % THREADS_PER_ROW;
+    const int  cols    =  VALID_KV >> 2;
+    const int  tail    = (VALID_KV >> 2) << 2;
+    const bool IS_TAIL = (tail < VALID_KV);
 
     const float rp_dropout  = IS_DROPOUT ? (1.0f / (1.0f - P_DROPOUT)) : 1.0f;
     const uint32_t drop_thr = IS_DROPOUT ? static_cast<uint32_t>((1.0f - P_DROPOUT) * 4294967295.0f) : 0;
@@ -65,7 +66,7 @@ __device__ __forceinline__ void WMMA_GEMM_SOFTMAX(
             float4 buffer = ld_float4(sS_base + idx * 16, row);
             thread_max = fmaxf(thread_max, fmaxf(fmaxf(buffer.x, buffer.y), fmaxf(buffer.z, buffer.w)));
         }
-        if constexpr (TAIL) {
+        if (IS_TAIL) {
             for (int idx = tail + thread; idx < VALID_KV; idx += THREADS_PER_ROW) {
                 thread_max = fmaxf(thread_max, ld_float(sS_base + idx * 4, row));
             }
@@ -128,7 +129,7 @@ __device__ __forceinline__ void WMMA_GEMM_SOFTMAX(
             half_buffer[rb_idx++] = __float22half2_rn(make_float2(e2, e3));
         }
 
-        if constexpr (TAIL) {
+        if (IS_TAIL) {
             int tr_idx = 0;
             #pragma unroll
             for (int idx = tail + thread; idx < VALID_KV; idx += THREADS_PER_ROW) {
@@ -164,13 +165,15 @@ __device__ __forceinline__ void WMMA_GEMM_SOFTMAX(
             st_half2(sP_base + (base + 1) * 4, half_buffer[wb_idx++], row);
         }
 
-        if constexpr (TAIL) {
+        if (IS_TAIL) {
             int tw_idx = 0;
             #pragma unroll
             for (int idx = tail + thread; idx < VALID_KV; idx += THREADS_PER_ROW) {
                 st_half(sP_base + idx * 2, tail_buffer[tw_idx++], row);
             }
+        }
 
+        if (VALID_KV < BLOCK_N) {
             #pragma unroll
             for (int idx = VALID_KV + thread; idx < BLOCK_N; idx += THREADS_PER_ROW) {
                 st_half(sP_base + idx * 2, __float2half(0.0f), row);

@@ -246,7 +246,7 @@ flash_attention_kvcache_kernel(
         //           sO[valid_q_rows, D_STRIDE] *= exp(old_max - new_max)
         // Template: SCORE_STRIDE=N_STRIDE, HEAD_STRIDE=D_STRIDE, TILES=true (varlen tail handling)
         // ======================================================================================
-        WMMA_GEMM_SOFTMAX<Config, BLOCK_M, BLOCK_N, N_STRIDE, D_STRIDE, false, true>(
+        WMMA_GEMM_SOFTMAX<Config, BLOCK_M, BLOCK_N, N_STRIDE, D_STRIDE, false>(
           sS, sP, sO,
           sRowMax, sRowSum, nullptr,
           block.valid_q_rows, valid_kv_rows, tid, block_q,
