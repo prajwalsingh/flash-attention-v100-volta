@@ -246,7 +246,7 @@ flash_attention_kvcache_kernel(
         //           sO[valid_q_rows, D_STRIDE] *= exp(old_max - new_max)
         // Template: SCORE_STRIDE=N_STRIDE, HEAD_STRIDE=D_STRIDE, TILES=true (varlen tail handling)
         // ======================================================================================
-        WMMA_GEMM_SOFTMAX<Config, BLOCK_M, BLOCK_N, N_STRIDE, D_STRIDE, false, true>(
+        WMMA_GEMM_SOFTMAX<Config, BLOCK_M, BLOCK_N, N_STRIDE, D_STRIDE, false>(
           sS, sP, sO,
           sRowMax, sRowSum, nullptr,
           block.valid_q_rows, valid_kv_rows, tid, block_q,
@@ -346,8 +346,8 @@ void launcher_flash_attention_kvcache(
 
     // Data pointers
     const __half* q_ptr          = reinterpret_cast<const __half*>(Q.data_ptr());
-    const __half* k_new_ptr      = K_new.defined() ? reinterpret_cast<const __half*>(K_new.data_ptr()) : nullptr;
-    const __half* v_new_ptr      = V_new.defined() ? reinterpret_cast<const __half*>(V_new.data_ptr()) : nullptr;
+    const __half* k_new_ptr      = T_NEW > 0 ? reinterpret_cast<const __half*>(K_new.data_ptr()) : nullptr;
+    const __half* v_new_ptr      = T_NEW > 0 ? reinterpret_cast<const __half*>(V_new.data_ptr()) : nullptr;
     __half*       k_cache_ptr    = reinterpret_cast<__half*>(K_cache.data_ptr());
     __half*       v_cache_ptr    = reinterpret_cast<__half*>(V_cache.data_ptr());
     __half*       out_ptr        = reinterpret_cast<__half*>(Out.data_ptr());
@@ -369,9 +369,9 @@ void launcher_flash_attention_kvcache(
     const int stride_k_s = K_cache.stride(1);
     const int stride_k_h = K_cache.stride(2);
 
-    const int stride_n_b = K_new.defined() ? K_new.stride(0) : 0;
-    const int stride_n_s = K_new.defined() ? K_new.stride(1) : 0;
-    const int stride_n_h = K_new.defined() ? K_new.stride(2) : 0;
+    const int stride_n_b = T_NEW > 0 ? K_new.stride(0) : 0;
+    const int stride_n_s = T_NEW > 0 ? K_new.stride(1) : 0;
+    const int stride_n_h = T_NEW > 0 ? K_new.stride(2) : 0;
 
     const int stride_o_b = Out.stride(0);
     const int stride_o_s = Out.stride(1);

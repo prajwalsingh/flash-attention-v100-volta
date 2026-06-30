@@ -228,7 +228,7 @@ flash_attention_forward_varlen_kernel(
         //           sO[valid_q_rows, D_STRIDE] *= exp(old_max - new_max)
         // Template: SCORE_STRIDE=N_STRIDE, HEAD_STRIDE=D_STRIDE, IS_DROPOUT, TILES=true
         // ======================================================================================
-        WMMA_GEMM_SOFTMAX<Config, BLOCK_M, BLOCK_N, N_STRIDE, D_STRIDE, IS_DROPOUT, true>(
+        WMMA_GEMM_SOFTMAX<Config, BLOCK_M, BLOCK_N, N_STRIDE, D_STRIDE, IS_DROPOUT>(
           sS, sP, sO,
           sRowMax, sRowSum, dmask_ptr ? dmask_ptr + start_kv : nullptr,
           block.valid_q_rows, valid_kv_rows, tid, block_q,
