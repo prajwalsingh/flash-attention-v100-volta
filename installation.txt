@@ -1,0 +1,12 @@
+1) create a conda environment: conda create -n envname python=3.11
+2) For nvcc --version: cuda 12.1 
+[pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121]
+
+3) conda activate envname
+4) conda install conda-forge::cxx-compiler==1.7.0
+5) 
+export TORCH_CUDA_ARCH_LIST="7.0"
+export MAX_JOBS=1
+export NVCC_THREADS=1
+6) python setup.py clean
+7) python setup.py install

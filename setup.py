@@ -15,7 +15,9 @@ from torch.utils.cpp_extension import CUDAExtension, BuildExtension
 
 this_dir = Path(__file__).parent.resolve()
 
+
 def auto_tune():
+    # Respect user-provided values.
     if os.environ.get("MAX_JOBS") and os.environ.get("NVCC_THREADS"):
         return
 
@@ -23,42 +25,60 @@ def auto_tune():
         import psutil
 
         cores = os.cpu_count() or 4
-        mem_sys  = psutil.virtual_memory().available / (1024**3)
+        mem_sys = psutil.virtual_memory().available / (1024**3)
+
         max_jobs = max(1, int((mem_sys * 0.9) / 2.5))
         max_jobs = min(max_jobs, cores)
-        max_thrd = max_jobs
-        os.environ["MAX_JOBS"]     = str(max_jobs)
+
+        # For V100 + CUDA 12.1, keep compilation conservative.
+        max_jobs = min(max_jobs, 4)
+        max_thrd = min(max_jobs, 2)
+
+        os.environ["MAX_JOBS"] = str(max_jobs)
         os.environ["NVCC_THREADS"] = str(max_thrd)
 
-        print(f"autoset max_jobs={max_jobs}, nvcc_threads={max_thrd} (current {cores} cores, {mem_sys:.1f}GB free mem)")
+        print(
+            f"autoset max_jobs={max_jobs}, "
+            f"nvcc_threads={max_thrd} "
+            f"(current {cores} cores, {mem_sys:.1f}GB free mem)"
+        )
+
     except Exception as e:
         print(f"Warning: could not auto-tune build params: {e}")
         os.environ.setdefault("MAX_JOBS", "4")
-        os.environ.setdefault("NVCC_THREADS", "4")
+        os.environ.setdefault("NVCC_THREADS", "2")
+
 
 auto_tune()
+
 
 def get_ext_modules():
     try:
         from torch.utils.cpp_extension import CUDAExtension
     except ImportError as e:
         raise RuntimeError(
-            "torch is required to build flash_attn_v100. "
-            "Please install torch >= 2.10 first (e.g., `pip install torch==2.10.0+cu129 --index-url https://download.pytorch.org/whl/cu129`)."
+            "PyTorch is required to build flash_attn_v100. "
+            "Your environment should contain a compatible PyTorch installation."
         ) from e
 
-    nvcc_threads = int(os.environ.get("NVCC_THREADS", 4))
+    nvcc_threads = int(os.environ.get("NVCC_THREADS", 2))
+
     nvcc_flags = [
         "-O3",
         "-std=c++17",
+
+        # Tesla V100 / Volta
         "-gencode", "arch=compute_70,code=sm_70",
+
         "-U__CUDA_NO_HALF_OPERATORS__",
         "-U__CUDA_NO_HALF_CONVERSIONS__",
         "-U__CUDA_NO_HALF2_OPERATORS__",
+
         "--expt-relaxed-constexpr",
         "--expt-extended-lambda",
         "--use_fast_math",
         "-Wno-deprecated-gpu-targets",
+
         f"--threads={nvcc_threads}",
     ]
 
@@ -70,6 +90,7 @@ def get_ext_modules():
             "--keep-dir", str(this_dir / "build"),
             "-Xptxas", "-v",
         ])
+
         (this_dir / "build").mkdir(exist_ok=True)
 
     if os.environ.get("MMA_NATIVE"):
@@ -91,45 +112,84 @@ def get_ext_modules():
             ],
             include_dirs=[this_dir / "include"],
             extra_compile_args={
-                "cxx": ["-O3", "-std=c++17"],
+                "cxx": [
+                    "-O3",
+                    "-std=c++17",
+                ],
                 "nvcc": nvcc_flags,
             },
         )
     ]
 
+
 class CopyAttention(build_py):
     def run(self):
         super().run()
+
         build_lib = self.build_lib
         this_dir = os.path.dirname(os.path.abspath(__file__))
 
-        src_pkg = os.path.join(this_dir, 'flash_attn')
-        dst_pkg = os.path.join(build_lib, 'flash_attn')
+        src_pkg = os.path.join(this_dir, "flash_attn")
+        dst_pkg = os.path.join(build_lib, "flash_attn")
+
         if os.path.exists(src_pkg):
             if os.path.exists(dst_pkg):
                 shutil.rmtree(dst_pkg)
-            shutil.copytree(src_pkg, dst_pkg, ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.so'))
-            print(f"Copied package: {src_pkg} -> {dst_pkg}")
+
+            shutil.copytree(
+                src_pkg,
+                dst_pkg,
+                ignore=shutil.ignore_patterns(
+                    "__pycache__",
+                    "*.pyc",
+                    "*.so",
+                ),
+            )
+
+            print(
+                f"Copied package: {src_pkg} -> {dst_pkg}"
+            )
+
 
 class InstallAttention(install):
     def run(self):
         install.run(self)
+
         import site
-        dst = os.path.join(site.getsitepackages()[0], 'flash_attn-2.8.3.dist-info')
-        if os.path.exists(dst): shutil.rmtree(dst)
+
+        dst = os.path.join(
+            site.getsitepackages()[0],
+            "flash_attn-2.8.3.dist-info",
+        )
+
+        if os.path.exists(dst):
+            shutil.rmtree(dst)
+
         os.makedirs(dst, exist_ok=True)
-        with open(os.path.join(dst, 'METADATA'), 'w') as f:
-            f.write("Metadata-Version: 2.4\nName: flash-attn\nVersion: 2.8.3\n")
-        with open(os.path.join(dst, 'top_level.txt'), 'w') as f:
-            f.write('flash_attn\n')
+
+        with open(
+            os.path.join(dst, "METADATA"),
+            "w",
+        ) as f:
+            f.write(
+                "Metadata-Version: 2.4\n"
+                "Name: flash-attn\n"
+                "Version: 2.8.3\n"
+            )
+
+        with open(
+            os.path.join(dst, "top_level.txt"),
+            "w",
+        ) as f:
+            f.write("flash_attn\n")
+
 
 def get_cmdclass():
     try:
         from torch.utils.cpp_extension import BuildExtension
     except ImportError as e:
         raise RuntimeError(
-            "torch is required to build flash_attn_v100. "
-            "Please install torch >= 2.10 first (e.g., `pip install torch==2.10.0+cu129 --index-url https://download.pytorch.org/whl/cu129`)."
+            "PyTorch is required to build flash_attn_v100."
         ) from e
 
     class BuildAttention(BuildExtension):
@@ -137,35 +197,95 @@ def get_cmdclass():
             import torch
 
             if not torch.cuda.is_available():
-                raise RuntimeError("CUDA is required but not available.")
-            if parse(torch.version.cuda) < parse("12.9"):
-                raise RuntimeError(f"CUDA version {torch.version.cuda} < 12.9 is not supported.")
+                raise RuntimeError(
+                    "CUDA is required but not available."
+                )
+
+            cuda_version = parse(torch.version.cuda)
+
+            # This fork was originally restricted to CUDA >= 12.9.
+            # For Tesla V100 + PyTorch 2.5.1+cu121,
+            # CUDA 12.1 is the intended minimum.
+            if cuda_version < parse("12.1"):
+                raise RuntimeError(
+                    f"CUDA version {torch.version.cuda} < 12.1 "
+                    "is not supported."
+                )
+
+            # Verify that the build is actually targeting V100.
+            capability = torch.cuda.get_device_capability()
+
+            if capability != (7, 0):
+                print(
+                    f"Warning: detected CUDA capability "
+                    f"{capability[0]}.{capability[1]}. "
+                    "This build is configured for Tesla V100 "
+                    "(sm_70)."
+                )
+
+            print(
+                f"Building FlashAttention-V100 with:"
+                f"\n  PyTorch: {torch.__version__}"
+                f"\n  CUDA: {torch.version.cuda}"
+                f"\n  GPU capability: "
+                f"{capability[0]}.{capability[1]}"
+                f"\n  Target architecture: sm_70"
+            )
 
             super().build_extensions()
 
             try:
-                import pathlib
-
-                src_lib = pathlib.Path(self.get_ext_fullpath("flash_attn_v100_cuda"))
+                src_lib = pathlib.Path(
+                    self.get_ext_fullpath(
+                        "flash_attn_v100_cuda"
+                    )
+                )
 
                 if src_lib.exists():
-                    dst_lib = src_lib.parent / "flash_attn_2_cuda.so"
+                    dst_lib = (
+                        src_lib.parent /
+                        "flash_attn_2_cuda.so"
+                    )
 
-                    if dst_lib.exists() or dst_lib.is_symlink():
-                       dst_lib.unlink()
+                    if (
+                        dst_lib.exists()
+                        or dst_lib.is_symlink()
+                    ):
+                        dst_lib.unlink()
 
                     dst_lib.symlink_to(src_lib.name)
-                    print(f"Created symlink: {dst_lib.name} -> {src_lib.name}")
-            except Exception as e:
-                print(f"Warning: Failed to create flash_attn_2_cuda.so symlink: {e}")
 
-    return {"build_ext": BuildAttention, "build_py": CopyAttention, 'install': InstallAttention}
+                    print(
+                        f"Created symlink: "
+                        f"{dst_lib.name} -> "
+                        f"{src_lib.name}"
+                    )
+
+            except Exception as e:
+                print(
+                    "Warning: Failed to create "
+                    f"flash_attn_2_cuda.so symlink: {e}"
+                )
+
+    return {
+        "build_ext": BuildAttention,
+        "build_py": CopyAttention,
+        "install": InstallAttention,
+    }
+
 
 try:
-    with open(this_dir / "README.md", encoding="utf-8") as f:
+    with open(
+        this_dir / "README.md",
+        encoding="utf-8",
+    ) as f:
         long_description = f.read()
+
 except FileNotFoundError:
-    long_description = "Flash Attention implementation for Tesla V100"
+    long_description = (
+        "Flash Attention implementation for Tesla V100"
+    )
+
 
 setup(
     name="flash_attn_v100",
@@ -177,7 +297,10 @@ setup(
     zip_safe=False,
     author="D.Skryabin",
     author_email="tg @ai_bond007",
-    description="Flash Attention implementation under unsupported Tesla V100",
+    description=(
+        "Flash Attention implementation "
+        "under unsupported Tesla V100"
+    ),
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/ai-bond/flash-attention-v100",

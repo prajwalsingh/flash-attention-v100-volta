@@ -15,12 +15,19 @@
     #include "mma_m16n16k16.h"
 #endif
 
+// CUDA 12.1 compatibility:
+// __tanhf is not exposed as a device intrinsic in this compilation context.
+// tanhf is the device-compatible CUDA math function.
+__device__ __forceinline__ float flash_attn_tanhf(float x) {
+    return tanhf(x);
+}
+
 // ======================================================================================
 // WMMA_GEMM_SCORES: Compute C = (A @ B) * scale [+(causal/window/alibi/softcap)]
 // Use for: Q@K^T (forward), dO@V^T (backward pre-softmax)
 // ======================================================================================
 template<typename Config, GemmType TYPE, int D, bool IS_CAUSAL, bool IS_ALIBI, bool IS_SOFTCAP, bool IS_WINDOW,
-                                                       int BLOCK_X, int BLOCK_Y, int IN_STRIDE, int OUT_STRIDE>
+                                                         int BLOCK_X, int BLOCK_Y, int IN_STRIDE, int OUT_STRIDE>
 __device__ __forceinline__ void WMMA_GEMM_SCORES(
     const __half* __restrict__ SMEM_A,
     const __half* __restrict__ SMEM_B,
@@ -88,7 +95,6 @@ __device__ __forceinline__ void WMMA_GEMM_SCORES(
                     const int global_m = GLOBAL_M + tile_m + row;
                     const int global_n = GLOBAL_N + tile_n + col;
                     const bool in_bounds = (global_m < GLOBAL_M + VALID_M) && (global_n < GLOBAL_N + VALID_N);
-
                     acc_frag.x[i] = in_bounds ? (((global_n - SEQLEN_OFFSET) > global_m) ? NEG_INF : acc_frag.x[i] * SOFTMAX_SCALE) : NEG_INF;
                 }
             } else {
@@ -109,11 +115,10 @@ __device__ __forceinline__ void WMMA_GEMM_SCORES(
                     float val = acc_frag.x[i] * SOFTMAX_SCALE;
                     if (!is_masked) {
                         if constexpr (IS_ALIBI) {
-                            // A bias of (-alibi_slope * |i + seqlen_k - seqlen_q - j|)
                             val = __fmaf_rn(-ALIBI_SLOPE, fabsf(static_cast<float>(global_m - (global_n - SEQLEN_OFFSET))), val);
                         }
                         if constexpr (IS_SOFTCAP) {
-                            val = __fmul_rn(SOFTCAP, __tanhf(__fmul_rn(val, softcap_rcp)));
+                            val = __fmul_rn(SOFTCAP, flash_attn_tanhf(__fmul_rn(val, softcap_rcp)));
                         }
                     } else {
                         val = NEG_INF;
@@ -142,7 +147,7 @@ __device__ __forceinline__ void WMMA_GEMM_SCORES(
                         val = __fmaf_rn(-ALIBI_SLOPE, fabsf(static_cast<float>(global_m - (global_n - SEQLEN_OFFSET))), val);
                     }
                     if constexpr (IS_SOFTCAP) {
-                        val = __fmul_rn(SOFTCAP, __tanhf(__fmul_rn(val, softcap_rcp)));
+                        val = __fmul_rn(SOFTCAP, flash_attn_tanhf(__fmul_rn(val, softcap_rcp)));
                     }
                 } else {
                     val = NEG_INF;
