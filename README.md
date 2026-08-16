@@ -2,64 +2,6 @@
 
 This repository implementation of [FlashAttention-2](https://github.com/ai-bond/flash-attention-v100/blob/main/utils/docs/attention.md) under unsupported in TriDao repo [Nvidia Tesla V100](https://github.com/ai-bond/flash-attention-v100/blob/main/utils/docs/volta.md)
 
-> It attempt to build flash attention from scratch without "Vibe Code" for self education.
-
-Last one available CUDA for Volta:
--------------
-
-According to [Nvidia Deprecated Architectures](https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html#deprecated-architectures): Architecture support for Volta is considered feature-complete. Offline compilation and library support for these architectures have been removed in CUDA Toolkit 13.0 major version release.
-
-```
-# Download package
-wget https://developer.download.nvidia.com/compute/cuda/12.9.1/local_installers/cuda_12.9.1_575.57.08_linux.run
-
-# Install, this cuda package with NVIDIA driver version 575.57.08 that can be installed together
-sudo sh cuda_12.9.1_575.57.08_linux.run
-
-# Export and apply
-cat >> ~/.bashrc << 'EOF'
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-export PATH=/usr/local/cuda/bin:$PATH
-EOF
-source ~/.bashrc
-```
-
-Deployment and compilation
--------------
-
-```bash
-# Create new python virtual env or use own existed:
-python -m venv env
-source env/bin/activate
-
-# Update pip
-pip install --upgrade pip
-
-# Clone code and install packages:
-git clone https://github.com/ai-bond/flash-attention-v100/
-cd ./flash-attention-v100
-
-# Install req packages
-pip install -r requirements.txt
-```
-As NVIDIA deprecated Volta support in CUDA since viersion 13 then PyTorch also restrict and deprecated support in new versions:  [PyTorch is dropping Volta support from CUDA-12.8 binaries for release 2.11](https://dev-discuss.pytorch.org/t/dropping-volta-support-from-cuda-12-8-binaries-for-release-2-11/) and check [PyTorch \[release 2.8-2.9\] delete support for Maxwell, Pascal, and Volta architectures for CUDA 12.8 and 12.9 builds](https://github.com/pytorch/pytorch/issues/157517)
-
-```bash
-# Install last one PyTorch that's support with 12.9 CUDA
-pip install torch==2.10.0+cu129 --index-url https://download.pytorch.org/whl/cu129
-
-# Check is package supports Volta
-python -c "import torch; p=torch.cuda.get_device_properties(0); print(f'{p.name} SM {p.major}.{p.minor} supported')"
-
-# If you will see Tesla V100-XXX-XXGB SM 7.0 supported all is done.
-# We can compile and install project with just:
-
-./run.sh 
-
-or 
-
-pip install . --no-build-isolation -v
-```
 Also after you can final check ready venv
 
 ```
@@ -81,7 +23,30 @@ Summary: Flash Attention for Tesla V100
 
 ```
 
-And gl and hf :)
+How to Incorporate into Existing Code
+--------------------
+
+Edit attention.py before the flash_attention call if bfloat is used (float is supported only):
+
+```
+
+orig_dtype = q.dtype
+
+q = q.to(torch.float16)
+k = k.to(torch.float16)
+v = v.to(torch.float16)
+
+x = flash_attn.flash_attn_*(
+    q,
+    k,
+    v,
+    ...
+)
+
+x = x.to(orig_dtype)
+
+```
+
 
 How to use FlashAttention
 -------------
